@@ -1,16 +1,14 @@
 from fastapi import APIRouter, Depends, status, HTTPException, Path
 from ..models import Users, Rounds, Holes
-from ..database import SessionLocal, get_db
+from ..database import get_db
 from .auth import get_current_user
-from .rounds import PostHoleRequest, PostRoundRequest, UpdateHoleRequest, UpdateRoundInfoRequest
+from .rounds import PostHoleRequest, PostRoundRequest, PostHoleResponse, PostRoundResponse, UpdateHoleRequest, UpdateRoundInfoRequest, calculate_hole_rules, calculate_round_rules
 from typing import Annotated
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-import datetime
-from typing import Optional
 from passlib.context import CryptContext
 
-
+ 
  
 
 router = APIRouter(
@@ -53,8 +51,8 @@ class UserResponseModel(BaseModel):
     id: int
     username: str
     email: str
-    first_name: str
-    last_name: str
+    first_name: str | None
+    last_name: str | None
     admin: bool
 
 
@@ -113,8 +111,9 @@ async def create_round(db: db_dependency, admin: admin_dependency, request: Post
         round = Rounds(
             user_id=user_id,
             date=request.date,
+            season=request.date.year,
             course_name=request.course_name,
-            is_front_nine=request.is_front_nine
+            is_front_nine=request.is_front_nine,
         )
 
         db.add(round)
@@ -133,15 +132,25 @@ async def create_round(db: db_dependency, admin: admin_dependency, request: Post
                 par=hole_request.par,
                 score=hole_request.score,
                 putts=hole_request.putts,
-                gir=(hole_request.score - hole_request.putts) <= (hole_request.par - 2)
+                fairway_hit=hole_request.fairway_hit,
+                penalty_strokes=hole_request.penalty_strokes
             )
+
+            calculate_hole_rules(hole)
 
             db.add(hole)
 
         
         db.commit()
+
+        return PostRoundResponse(
+            date=round.date,
+            season=round.season,
+            course_name=round.course_name,
+            holes=db.query(Holes).filter(Holes.round_id == round.id).all()
+        )
     
-    except:
+    except Exception:
         db.rollback() #get rid of all the changes we just made to the database
         raise # raise the exception we encountered
 
@@ -162,7 +171,9 @@ async def edit_round_info(
 
     for key, value in update_data.items():
         setattr(round_model, key, value) #Update the round model to include our new information by seeing which of the keys match
-    
+
+    calculate_round_rules(round_model) #recalculate the season based on the new date if it was updated
+
     db.commit()
     db.refresh(round_model)
     return round_model #return the updated round model so the person can see if they messed up their update
@@ -188,7 +199,7 @@ async def edit_hole(
     for key, value in update_data.items():
         setattr(hole, key, value)
     
-    hole.gir = (hole.score - hole.putts) <= (hole.par - 2) 
+    calculate_hole_rules(hole) #recalculate the GIR and fairway hit based on the new values if they were updated
 
     db.commit()
     db.refresh(hole)
@@ -262,7 +273,15 @@ async def get_user_summary(db: db_dependency, admin: admin_dependency, user_id: 
 
 @router.post('/users/create', status_code=status.HTTP_201_CREATED)
 async def create_user(db: db_dependency, admin: admin_dependency, request: AdminCreateUserRequest):
-    
+    existing_user = db.query(Users).filter(
+        (Users.username == request.username) |
+        (Users.email == request.email)
+    ).first()
+
+    if existing_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username or email already exists")
+
+
     model = Users(
         email=request.email,
         username=request.username,

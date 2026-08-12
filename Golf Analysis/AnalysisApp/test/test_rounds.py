@@ -1,5 +1,5 @@
 from .utils import *
-
+ 
 
 def test_get_rounds(test_user, test_round):
     response = client.get('/rounds/')
@@ -8,6 +8,7 @@ def test_get_rounds(test_user, test_round):
         'id': 1,
         'user_id': 1,
         'date': str(datetime.date.today()),
+        'season': datetime.date.today().year,
         'course_name': 'Edmonton Country Club',
         'is_front_nine': True
     }]
@@ -30,6 +31,7 @@ def test_get_info_from_round(test_round, test_user):
         'id': test_round.id,
         'user_id': test_user.id,
         'date': str(datetime.date.today()),
+        'season': datetime.date.today().year,
         'course_name': 'Edmonton Country Club',
         'is_front_nine': True
     }
@@ -63,7 +65,9 @@ def test_get_stats_from_round(test_round, test_hole, test_user):
             'par': 4,
             'score': 4,
             'putts': 2,
-            'gir': True
+            'gir': True,
+            'fairway_hit': True,
+            'penalty_strokes': 0
         }
     ]
 
@@ -96,18 +100,22 @@ def test_create_round(test_round, test_user):
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True
             },
             {
                 'hole_number': 11,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 12,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 13,
@@ -141,9 +149,11 @@ def test_create_round(test_round, test_user):
             },
             {
                 'hole_number': 18,
-                'par': 4,
+                'par': 3,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True, #test to make sure we catch this and set it to None in the backend
+                'penalty_strokes': 0
             },
         ]
     }
@@ -151,6 +161,126 @@ def test_create_round(test_round, test_user):
     response = client.post('/rounds/create', json=request_data)
     assert response.status_code == status.HTTP_201_CREATED
 
+    db = TestingSessionLocal()
+    
+    round_model = db.query(Rounds).filter(Rounds.id == 2).first()
+    assert round_model.date == datetime.date.today()
+    assert round_model.season == datetime.date.today().year
+    assert round_model.course_name == request_data['course_name']
+    assert round_model.is_front_nine == request_data['is_front_nine']
+
+    holes_list = db.query(Holes).filter(Holes.round_id == 2).all()
+    assert len(holes_list) == len(request_data['holes'])
+
+    holes_list.sort(key=lambda x: x.hole_number)
+
+    for db_hole, request_hole in zip(holes_list, request_data['holes']):
+        assert db_hole.hole_number == request_hole['hole_number']
+        assert db_hole.par == request_hole['par']
+        assert db_hole.score == request_hole['score']
+        assert db_hole.putts == request_hole['putts']
+        assert db_hole.gir == (request_hole['score'] - request_hole['putts'] <= request_hole['par'] - 2)
+        assert db_hole.penalty_strokes == request_hole.get('penalty_strokes')
+        if request_hole["par"] == 3:
+            assert db_hole.fairway_hit is None
+        else:
+            assert db_hole.fairway_hit == request_hole.get("fairway_hit")
+
+    for hole in holes_list:
+        db.delete(hole)
+
+    db.delete(round_model)
+
+    db.commit()
+
+    assert response.json() == {
+        'date': str(datetime.date.today()),
+        'season': datetime.date.today().year,
+        'course_name': 'Edmonton Country Club',
+        "holes": [
+                    {
+                    'hole_number': 10,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': True,
+                    'penalty_strokes': None
+                },
+                {
+                    'hole_number': 11,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': None,
+                    'penalty_strokes': 0
+                },
+                {
+                    'hole_number': 12,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': True,
+                    'penalty_strokes': 0
+                },
+                {
+                    'hole_number': 13,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': None,
+                    'penalty_strokes': None
+                },
+                {
+                    'hole_number': 14,
+                    'par': 4,
+                    'score': 5,
+                    'putts': 2,
+                    'gir': False,
+                    'fairway_hit': None,
+                    'penalty_strokes': None
+                },
+                {
+                    'hole_number': 15,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': None,
+                    'penalty_strokes': None
+                },
+                {
+                    'hole_number': 16,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': None,
+                    'penalty_strokes': None
+                },
+                {
+                    'hole_number': 17,
+                    'par': 4,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': True,
+                    'fairway_hit': None,
+                    'penalty_strokes': None
+                },
+                {
+                    'hole_number': 18,
+                    'par': 3,
+                    'score': 4,
+                    'putts': 2,
+                    'gir': False,
+                    'fairway_hit': None,
+                    'penalty_strokes': 0
+                },
+        ]
+    }
 
 def test_create_round_not_authenitcated(test_round, no_user_override):
     request_data = {
@@ -231,7 +361,8 @@ def test_edit_round_info(test_round, test_user):
 
     db = TestingSessionLocal()
     model = db.query(Rounds).filter(Rounds.id == 1).first()
-    assert model.date == request_data['date']
+    assert model.date == datetime.date.today()
+    assert model.season == datetime.date.today().year
     assert model.course_name == request_data['course_name']
     assert model.is_front_nine == True
 
@@ -239,6 +370,7 @@ def test_edit_round_info(test_round, test_user):
         'id': 1,
         'user_id': 1,
         'date': str(datetime.date.today()),
+        'season': datetime.date.today().year,
         'course_name': 'Edmonton Springs',
         'is_front_nine': True
     }
@@ -272,7 +404,7 @@ def test_edit_round_info_not_authenitcated(test_round, no_user_override):
 
     response = client.patch(f'/rounds/round_info/{test_round.id}', json=request_data)
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
+ 
 
 def test_edit_hole(test_round, test_hole, test_user):
     request_data = {
@@ -292,6 +424,8 @@ def test_edit_hole(test_round, test_hole, test_user):
     assert model.score == request_data['score']
     assert model.putts == 2
     assert model.gir == False 
+    assert model.fairway_hit == None
+    assert model.penalty_strokes == 0
 
     assert response.json() == {
         'id': 1,
@@ -300,7 +434,9 @@ def test_edit_hole(test_round, test_hole, test_user):
         'par': 3,
         'score': 4,
         'putts': 2,
-        'gir': False
+        'gir': False,
+        'fairway_hit': None,
+        'penalty_strokes': 0
     }
 
 

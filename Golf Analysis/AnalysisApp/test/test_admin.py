@@ -1,11 +1,16 @@
+from pprint import pprint
+
 from .utils import *
+from datetime import timedelta
+from urllib import response
+
 
 def test_admin_authentication(test_non_admin):
     app.dependency_overrides[get_current_user] = lambda: {
         'username': test_non_admin.username,
         'id': test_non_admin.id,
         'admin': False
-    }
+    } 
 
     response = client.get('/admin/dashboard')
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -25,13 +30,25 @@ def test_admin_dashboard(test_user, test_round, test_hole):
 def test_admin_get_all_rounds(test_round):
     response = client.get('/admin/rounds')
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == [{'id': 1, 'user_id': 1, 'date': str(datetime.date.today()), 'course_name': 'Edmonton Country Club', 'is_front_nine':True}]
+    assert response.json() == [{
+        'id': 1, 
+        'user_id': 1, 
+        'date': str(datetime.date.today()), 
+        'season': datetime.date.today().year,
+        'course_name': 'Edmonton Country Club', 
+        'is_front_nine':True}]
 
 
 def test_admin_info_from_round(test_round):
     response = client.get('/admin/rounds/round_info/1')
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == {'id': 1, 'user_id': 1, 'date': str(datetime.date.today()), 'course_name': 'Edmonton Country Club', 'is_front_nine':True}
+    assert response.json() == {
+        'id': 1, 
+        'user_id': 1, 
+        'date': str(datetime.date.today()), 
+        'season': datetime.date.today().year,
+        'course_name': 'Edmonton Country Club', 
+        'is_front_nine':True}
 
 
 def test_admin_info_from_round_not_found(test_round):
@@ -41,13 +58,13 @@ def test_admin_info_from_round_not_found(test_round):
 
 
 def test_admin_stats_from_round(test_round, test_hole):
-    response = client.get('/rounds/round_stats/1')
+    response = client.get('/admin/rounds/round_stats/1')
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == [{'id': 1, 'round_id': 1, 'hole_number': 1, 'par': 4, 'score': 4, 'putts': 2, 'gir': True}]
+    assert response.json() == [{'id': 1, 'round_id': 1, 'hole_number': 1, 'par': 4, 'score': 4, 'putts': 2, 'gir': True, 'fairway_hit': True, 'penalty_strokes': 0}]
 
 
-def test_admin_stats_from_round(test_round, test_hole):
-    response = client.get('/rounds/round_stats/999')
+def test_admin_stats_from_round_not_found(test_round, test_hole):
+    response = client.get('/admin/rounds/round_stats/999')
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert response.json() == {'detail': 'Round not found'}
 
@@ -63,24 +80,30 @@ def test_admin_create_front_nine_round(test_round, test_hole):
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
             },
             {
                 'hole_number': 2,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 3,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 4,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 5,
@@ -108,9 +131,11 @@ def test_admin_create_front_nine_round(test_round, test_hole):
             },
             {
                 'hole_number': 9,
-                'par': 4,
+                'par': 3,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True, #check to make sure this is set to None in the backend
+                'penalty_strokes': 0
             },
         ]
     }
@@ -121,7 +146,8 @@ def test_admin_create_front_nine_round(test_round, test_hole):
     db = TestingSessionLocal()
 
     round_model = db.query(Rounds).filter(Rounds.id == 2).first()
-    assert round_model.date == request_data['date']
+    assert round_model.date == datetime.date.today()
+    assert round_model.season == datetime.date.today().year
     assert round_model.course_name == request_data['course_name']
     assert round_model.is_front_nine == request_data['is_front_nine']
 
@@ -136,7 +162,12 @@ def test_admin_create_front_nine_round(test_round, test_hole):
         assert db_hole.score == request_hole['score']
         assert db_hole.putts == request_hole['putts']
         assert db_hole.gir == (request_hole['score'] - request_hole['putts'] <= request_hole['par'] - 2)
-    
+        assert db_hole.penalty_strokes == request_hole.get('penalty_strokes')
+        if request_hole["par"] == 3:
+            assert db_hole.fairway_hit is None
+        else:
+            assert db_hole.fairway_hit == request_hole.get("fairway_hit")
+
     for hole in holes_list:
         db.delete(hole)
 
@@ -144,10 +175,94 @@ def test_admin_create_front_nine_round(test_round, test_hole):
 
     db.commit()
 
-
-    
-
-
+    assert response.json() == {
+        'date': str(datetime.date.today()),
+        'season': datetime.date.today().year, 
+        'course_name': 'Edmonton Country Club',
+        "holes": [
+            {
+                'hole_number': 1,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': True,
+                'penalty_strokes': None
+            },
+            {
+                'hole_number': 2,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': None,
+                'penalty_strokes': 0
+            },
+            {
+                'hole_number': 3,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': True,
+                'penalty_strokes': 0
+            },
+            {
+                'hole_number': 4,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': True,
+                'penalty_strokes': 0
+            },
+            {
+                'hole_number': 5,
+                'par': 4,
+                'score': 5,
+                'putts': 2,
+                'gir': False,
+                'fairway_hit': None,
+                'penalty_strokes': None
+            },
+            {
+                'hole_number': 6,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': None,
+                'penalty_strokes': None
+            },
+            {
+                'hole_number': 7,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': None,
+                'penalty_strokes': None
+            },
+            {
+                'hole_number': 8,
+                'par': 4,
+                'score': 4,
+                'putts': 2,
+                'gir': True,
+                'fairway_hit': None,
+                'penalty_strokes': None
+            },
+            {
+                'hole_number': 9,
+                'par': 3,
+                'score': 4,
+                'putts': 2,
+                'gir': False,
+                'fairway_hit': None, #check to make sure this is set to None in the backend
+                'penalty_strokes': 0
+            }
+        ]
+    }
 
 def test_admin_create_back_nine_round(test_round, test_hole):
     request_data = {
@@ -160,24 +275,30 @@ def test_admin_create_back_nine_round(test_round, test_hole):
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
             },
             {
                 'hole_number': 11,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 12,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 13,
                 'par': 4,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True,
+                'penalty_strokes': 0
             },
             {
                 'hole_number': 14,
@@ -205,9 +326,11 @@ def test_admin_create_back_nine_round(test_round, test_hole):
             },
             {
                 'hole_number': 18,
-                'par': 4,
+                'par': 3,
                 'score': 4,
                 'putts': 2,
+                'fairway_hit': True, #check to make sure this is set to None in the backend
+                'penalty_strokes': 0
             },
         ]
     }
@@ -218,7 +341,8 @@ def test_admin_create_back_nine_round(test_round, test_hole):
     db = TestingSessionLocal()
 
     round_model = db.query(Rounds).filter(Rounds.id == 2).first()
-    assert round_model.date == request_data['date']
+    assert round_model.date == datetime.date.today()
+    assert round_model.season == datetime.date.today().year
     assert round_model.course_name == request_data['course_name']
     assert round_model.is_front_nine == request_data['is_front_nine']
 
@@ -233,19 +357,115 @@ def test_admin_create_back_nine_round(test_round, test_hole):
         assert db_hole.score == request_hole['score']
         assert db_hole.putts == request_hole['putts']
         assert db_hole.gir == (request_hole['score'] - request_hole['putts'] <= request_hole['par'] - 2)
-    
+        assert db_hole.penalty_strokes == request_hole.get('penalty_strokes')
+        if request_hole["par"] == 3:
+            assert db_hole.fairway_hit is None
+        else:
+            assert db_hole.fairway_hit == request_hole.get("fairway_hit")
+
     for hole in holes_list:
         db.delete(hole)
 
     db.delete(round_model)
     
     db.commit()
+
+    pprint(response.json())
+
+    assert response.json() == {
+    'date': str(datetime.date.today()),
+    'season': datetime.date.today().year,
+    'course_name': 'Edmonton Country Club',
+    'holes':[
+        {
+            'hole_number': 10,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': True,
+            'penalty_strokes': None
+        },
+        {
+            'hole_number': 11,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': None,
+            'penalty_strokes': 0
+        },
+        {
+            'hole_number': 12,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': True,
+            'penalty_strokes': 0
+        },
+        {
+            'hole_number': 13,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': True,
+            'penalty_strokes': 0
+        },
+        {
+            'hole_number': 14,
+            'par': 4,
+            'score': 5,
+            'putts': 2,
+            'gir': False,
+            'fairway_hit': None,
+            'penalty_strokes': None
+        },
+        {
+            'hole_number': 15,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': None,
+            'penalty_strokes': None
+        },
+        {
+            'hole_number': 16,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': None,
+            'penalty_strokes': None
+        },
+        {
+            'hole_number': 17,
+            'par': 4,
+            'score': 4,
+            'putts': 2,
+            'gir': True,
+            'fairway_hit': None,
+            'penalty_strokes': None
+        },
+        {
+            'hole_number': 18,
+            'par': 3,
+            'score': 4,
+            'putts': 2,
+            'gir': False,
+            'fairway_hit': None, #check to make sure this is set to None in the backend
+            'penalty_strokes': 0
+        }
+        ]
+    }
     
 
 def test_admin_create_round_user_not_found(test_round, test_hole):
     request_data = {
-        'date': str(datetime.date.today()), 
-        'course_name': 'Edmonton Country Club', 
+        'date': str(datetime.date.today()),
+        'course_name': 'Edmonton Country Club',
         'is_front_nine': False,
         'holes':[
             {
@@ -311,7 +531,7 @@ def test_admin_create_round_user_not_found(test_round, test_hole):
 
 def test_admin_edit_round_info(test_round):
     request_data = {
-        'date': str(datetime.date.today()),
+        'date': str(datetime.date.today() - timedelta(days=365)),
         'course_name': 'Edmonton Springs'
     }
 
@@ -320,14 +540,16 @@ def test_admin_edit_round_info(test_round):
 
     db = TestingSessionLocal()
     model = db.query(Rounds).filter(Rounds.id == 1).first()
-    assert model.date == request_data['date']
+    assert model.date == datetime.date.today() - timedelta(days=365)
+    assert model.season == (datetime.date.today() - timedelta(days=365)).year
     assert model.course_name == request_data['course_name']
     assert model.is_front_nine == True
 
     assert response.json() == {
         'id': 1,
         'user_id': 1,
-        'date': str(datetime.date.today()),
+        'date': str(datetime.date.today() - timedelta(days=365)),
+        'season': (datetime.date.today() - timedelta(days=365)).year,
         'course_name': 'Edmonton Springs',
         'is_front_nine': True
     }
@@ -346,7 +568,8 @@ def test_admin_edit_round_info_round_not_found(test_round):
 def test_admin_edit_hole(test_round, test_hole):
     request_data = {
         'par': 3,
-        'score': 4
+        'score': 4,
+        'penalty_strokes': 1
     }
 
     response = client.patch('/admin/rounds/round_stats/1/hole/1', json=request_data)
@@ -361,6 +584,8 @@ def test_admin_edit_hole(test_round, test_hole):
     assert model.score == request_data['score']
     assert model.putts == 2
     assert model.gir == False 
+    assert model.fairway_hit == None
+    assert model.penalty_strokes == request_data['penalty_strokes']
 
     assert response.json() == {
         'id': 1,
@@ -369,7 +594,9 @@ def test_admin_edit_hole(test_round, test_hole):
         'par': 3,
         'score': 4,
         'putts': 2,
-        'gir': False
+        'gir': False,
+        'fairway_hit': None,
+        'penalty_strokes': 1
     }
 
 
@@ -616,7 +843,8 @@ def test_admin_delete_user(test_user, test_round, test_hole):
 
     dummy_round = Rounds(
         user_id=dummy_user.id,
-        date=str(datetime.date.today()),
+        date=datetime.date.today(),
+        season=datetime.date.today().year,
         course_name= 'Edmonton Country Club',
         is_front_nine= True
     )
@@ -631,7 +859,9 @@ def test_admin_delete_user(test_user, test_round, test_hole):
         par = 4,
         score = 4,
         putts = 2,
-        gir = True
+        gir = True,
+        fairway_hit = True,
+        penalty_strokes = 0
     )
 
     db.add(dummy_hole)

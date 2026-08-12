@@ -1,5 +1,5 @@
 from .database import Base
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, Date, ForeignKey
 
 class Users(Base):
     __tablename__ = 'users'
@@ -18,11 +18,12 @@ class Rounds(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    date = Column(String)
+    date = Column(Date, nullable=False)
+    season = Column(Integer, nullable=False)
     course_name = Column(String)
     is_front_nine = Column(Boolean, nullable=False)
 
-
+ 
 class Holes(Base):
     __tablename__ = 'holes'
 
@@ -33,4 +34,6 @@ class Holes(Base):
     score = Column(Integer, nullable=False)
     putts = Column(Integer, nullable=False)
     gir = Column(Boolean, nullable=False)
+    fairway_hit = Column(Boolean, nullable=True)
+    penalty_strokes = Column(Integer, nullable=True)
 

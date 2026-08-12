@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status, HTTPException, Path
-from ..models import Users, Rounds, Holes
-from ..database import SessionLocal, get_db
+from ..models import Rounds, Holes
+from ..database import get_db
 from .auth import get_current_user
 from typing import Annotated
 from sqlalchemy.orm import Session
@@ -20,11 +20,28 @@ db_dependency = Annotated[Session, Depends(get_db)]
 user_dependency = Annotated[dict, Depends(get_current_user)]
 
 
+def calculate_hole_rules(hole: Holes):
+    hole.gir = (hole.score - hole.putts) <= (hole.par - 2)
+    
+    if hole.par == 3:
+        hole.fairway_hit = None
+
+
+def calculate_round_rules(round: Rounds):
+    round.season = round.date.year
+
+
 class PostHoleRequest(BaseModel):
     par: int = Field(ge=3, le=5)
     score: int = Field(ge=1)
     putts: int = Field(ge=0)
-
+    fairway_hit: bool | None = Field(
+        default=None, 
+        description='To record a missed fairway, explicitly send False. Leave the field blank (or send None) if you did not track the fairway for this hole, or the fairway was not applicable')
+    penalty_strokes: int | None = Field(
+        default=None,
+        description='Send 0 if you did not have any penalty strokes on a given hole. If you did not track penalty strokes, leave the field blank (or send None)'
+    )
 
 class PostRoundRequest(BaseModel):
     date: datetime.date
@@ -39,34 +56,59 @@ class PostRoundRequest(BaseModel):
                 "course_name": "Edmonton Country Club",
                 "is_front_nine": True,
                 "holes": [
-                    {"par": 4, "score": 4, "putts": 2},
-                    {"par": 4, "score": 4, "putts": 2},
-                    {"par": 4, "score": 4, "putts": 2},
-                    {"par": 3, "score": 3, "putts": 2},
-                    {"par": 4, "score": 4, "putts": 2},
-                    {"par": 5, "score": 5, "putts": 2},
-                    {"par": 4, "score": 4, "putts": 2},
-                    {"par": 4, "score": 4, "putts": 2},
-                    {"par": 4, "score": 4, "putts": 2}
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 3, "score": 3, "putts": 2, "penalty_strokes": 0},
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 5, "score": 5, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0},
+                    {"par": 4, "score": 4, "putts": 2, "fairway_hit": True, "penalty_strokes": 0}
                 ]
             }
         }
     }
+
+class PostHoleResponse(BaseModel):
+    hole_number: int = Field(ge=1, le=18)
+    par: int = Field(ge=3, le=5)
+    score: int = Field(ge=1)
+    putts: int = Field(ge=0)
+    gir: bool
+    fairway_hit: bool | None = None
+    penalty_strokes: int | None = None
+
+    #This allows us to pass in a SQLAlchemy model and have it automatically converted to a Pydantic model
+    model_config = {
+    "from_attributes": True
+} 
+
+
+class PostRoundResponse(BaseModel):
+    date: datetime.date
+    season: int
+    course_name: str
+    holes: list[PostHoleResponse]
+
+    model_config = {
+    "from_attributes": True
+}
 
 
 class UpdateHoleRequest(BaseModel):
     par: Optional[int] = Field(default=None, ge=3, le=5)
     score: Optional[int] = Field(default=None,ge=1)
     putts: Optional[int] = Field(default=None, ge=0)
+    fairway_hit: Optional[bool] = Field(default=None)
+    penalty_strokes: Optional[int] = Field(default=None)
 
 
 class UpdateRoundInfoRequest(BaseModel):
     date: Optional[datetime.date] = None
     course_name: Optional[str] = None
-    is_front_nine: Optional[bool] = None
 
 
-    
 
 
 @router.get('/', status_code=status.HTTP_200_OK)
@@ -109,7 +151,7 @@ async def get_stats_from_round(db: db_dependency, user: user_dependency, round_i
     return db.query(Holes).filter(Holes.round_id == round_id).all()
 
 
-@router.post('/create', status_code=status.HTTP_201_CREATED)
+@router.post('/create', status_code=status.HTTP_201_CREATED, response_model=PostRoundResponse)
 async def create_round(db: db_dependency, user: user_dependency, request: PostRoundRequest):
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
@@ -118,6 +160,7 @@ async def create_round(db: db_dependency, user: user_dependency, request: PostRo
         round = Rounds(
             user_id=user.get('id'),
             date=request.date,
+            season=request.date.year,
             course_name=request.course_name,
             is_front_nine=request.is_front_nine
         )
@@ -132,27 +175,38 @@ async def create_round(db: db_dependency, user: user_dependency, request: PostRo
             start_hole = 10
 
         for hole_num, hole_request in enumerate(request.holes, start=start_hole):
-
+            
+            fairway_hit = None if hole_request.par == 3 else hole_request.fairway_hit
+            
             hole = Holes(
                 round_id=round.id,
                 hole_number=hole_num,
                 par=hole_request.par,
                 score=hole_request.score,
                 putts=hole_request.putts,
-                gir=(hole_request.score - hole_request.putts) <= (hole_request.par - 2)
-            )
+                gir=(hole_request.score - hole_request.putts) <= (hole_request.par - 2),
+                fairway_hit=fairway_hit,  # Fairway hit is not applicable for par 3 holes
+                penalty_strokes=hole_request.penalty_strokes
+                )
 
             db.add(hole)
 
         
         db.commit()
-    
-    except:
+
+        return PostRoundResponse(
+            date=round.date,
+            season=round.season,
+            course_name=round.course_name,
+            holes=db.query(Holes).filter(Holes.round_id == round.id).all()
+        )
+            
+    except Exception:
         db.rollback() #get rid of all the changes we just made to the database
         raise # raise the exception we encountered
 
 
-@router.patch('/round_info/{round_id}')
+@router.patch('/round_info/{round_id}', status_code=status.HTTP_200_OK)
 async def edit_round_info(
     db: db_dependency, 
     user: user_dependency, 
@@ -169,6 +223,7 @@ async def edit_round_info(
     
     update_data = request.model_dump(exclude_unset=True) #exclude_unset means that our update_data only includes the data our user actually sent
 
+
     for key, value in update_data.items():
         setattr(round_model, key, value) #Update the round model to include our new information by seeing which of the keys match
     
@@ -177,7 +232,7 @@ async def edit_round_info(
     return round_model #return the updated round model so the person can see if they messed up their update
 
 
-@router.patch('/round_stats/{round_id}/hole/{hole_number}')
+@router.patch('/round_stats/{round_id}/hole/{hole_number}', status_code=status.HTTP_200_OK)
 async def edit_hole(
     db: db_dependency, 
     user: user_dependency, 
@@ -201,6 +256,9 @@ async def edit_hole(
         setattr(hole, key, value)
 
     hole.gir = (hole.score - hole.putts) <= (hole.par - 2)
+
+    if hole.par == 3:
+        hole.fairway_hit = None
 
     db.commit()
     db.refresh(hole)

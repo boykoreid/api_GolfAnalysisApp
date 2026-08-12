@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from ..models import Users
-from ..database import SessionLocal, get_db
+from ..database import get_db
 from typing import Annotated
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
-import secrets
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
+import os
 
 
 
@@ -17,7 +18,10 @@ router = APIRouter(
     tags=['auth']
 )
 
-SECRET_KEY = 'aisbfaiUsfuiaShfAAOIASOIFHAiofdusdg90ew9rwe90349'
+load_dotenv()
+SECRET_KEY = os.getenv("SECRET_KEY")
+if SECRET_KEY is None:
+    raise Exception("SECRET_KEY not found")
 ALGORITHM = 'HS256'
 
 bcrypt_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -82,6 +86,18 @@ class CreateUserRequest(BaseModel):
 
 @router.post('/', status_code=status.HTTP_201_CREATED)
 async def create_user(db: db_dependency, request: CreateUserRequest):
+    existing_user = db.query(Users).filter(
+        (Users.username == request.username) |
+        (Users.email == request.email)
+    ).first()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Username or email already exists"
+        )
+    
+
     model = Users(
         email=request.email,
         username=request.username,
@@ -91,8 +107,13 @@ async def create_user(db: db_dependency, request: CreateUserRequest):
         admin=False
     )
 
-    db.add(model)
-    db.commit()
+    try:
+        db.add(model)
+        db.commit()
+        
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post('/login')
@@ -102,7 +123,7 @@ async def create_access_token_for_login(db: db_dependency, form: Annotated[OAuth
 
     user = authenticate_user(db, username, password)
 
-    if user == False:
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Could not validate user')
     
     token = create_token(user.id, user.username, user.admin)
